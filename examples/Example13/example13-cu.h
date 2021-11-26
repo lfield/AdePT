@@ -4,6 +4,7 @@
 #ifndef EXAMPLE13_CUH
 #define EXAMPLE13_CUH
 
+#include <CL/sycl.hpp>
 #include "example13.h"
 
 #include <AdePT/MParray.h>
@@ -30,9 +31,9 @@ struct Track {
   vecgeom::Vector3D<Precision> dir;
   vecgeom::NavStateIndex navState;
 
-  __host__ __device__ double Uniform() { return rngState.Rndm(); }
+  double Uniform() { return rngState.Rndm(); }
 
-  __host__ __device__ void InitAsSecondary(const Track &parent)
+  void InitAsSecondary(const Track &parent)
   {
     // The caller is responsible to branch a new RNG state and to set the energy.
     this->numIALeft[0] = -1.0;
@@ -48,15 +49,16 @@ struct Track {
 };
 
 // Defined in example13.cu
-extern __constant__ __device__ int Zero;
+//dpct::constant_memory<int, 0> Zero;
+int Zero = 0;
 
 class RanluxppDoubleEngine : public G4HepEmRandomEngine {
   // Wrapper functions to call into RanluxppDouble.
-  static __host__ __device__ __attribute__((noinline)) double FlatWrapper(void *object)
+  static __attribute__((noinline)) double FlatWrapper(void *object)
   {
     return ((RanluxppDouble *)object)->Rndm();
   }
-  static __host__ __device__ __attribute__((noinline)) void FlatArrayWrapper(void *object, const int size, double *vect)
+  static __attribute__((noinline)) void FlatArrayWrapper(void *object, const int size, double *vect)
   {
     for (int i = 0; i < size; i++) {
       vect[i] = ((RanluxppDouble *)object)->Rndm();
@@ -64,10 +66,10 @@ class RanluxppDoubleEngine : public G4HepEmRandomEngine {
   }
 
 public:
-  __host__ __device__ RanluxppDoubleEngine(RanluxppDouble *engine)
+  RanluxppDoubleEngine(RanluxppDouble *engine)
       : G4HepEmRandomEngine(/*object=*/engine, &FlatWrapper, &FlatArrayWrapper)
   {
-#ifdef __CUDA_ARCH__
+#ifdef DPCT_COMPATIBILITY_TEMP
     // This is a hack: The compiler cannot see that we're going to call the
     // functions through their pointers, so it underestimates the number of
     // required registers. By including calls to the (non-inlinable) functions
@@ -87,9 +89,9 @@ class SlotManager {
   const int fMaxSlot;
 
 public:
-  __host__ __device__ SlotManager(int maxSlot) : fMaxSlot(maxSlot) { fNextSlot = 0; }
+  SlotManager(int maxSlot) : fMaxSlot(maxSlot) { fNextSlot = 0; }
 
-  __host__ __device__ int NextSlot()
+  int NextSlot()
   {
     int next = fNextSlot.fetch_add(1);
     if (next >= fMaxSlot) return -1;
@@ -104,12 +106,12 @@ class ParticleGenerator {
   adept::MParray *fActiveQueue;
 
 public:
-  __host__ __device__ ParticleGenerator(Track *tracks, SlotManager *slotManager, adept::MParray *activeQueue)
+  ParticleGenerator(Track *tracks, SlotManager *slotManager, adept::MParray *activeQueue)
       : fTracks(tracks), fSlotManager(slotManager), fActiveQueue(activeQueue)
   {
   }
 
-  __host__ __device__ Track &NextTrack()
+  Track &NextTrack()
   {
     int slot = fSlotManager->NextSlot();
     if (slot == -1) {
@@ -128,23 +130,24 @@ struct Secondaries {
 };
 
 // Kernels in different TUs.
-__global__ void TransportElectrons(Track *electrons, const adept::MParray *active, Secondaries secondaries,
+void TransportElectrons(Track *electrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
                                    ScoringPerVolume *scoringPerVolume);
-__global__ void TransportPositrons(Track *positrons, const adept::MParray *active, Secondaries secondaries,
+void TransportPositrons(Track *positrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
                                    ScoringPerVolume *scoringPerVolume);
 
-__global__ void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
+void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
                                 adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                ScoringPerVolume *scoringPerVolume);
+                                ScoringPerVolume *scoringPerVolume,
+                                sycl::nd_item<3> item_ct1, int * MCIndex);
 
 // Constant data structures from G4HepEm accessed by the kernels.
 // (defined in TestEm3.cu)
-extern __constant__ __device__ struct G4HepEmParameters g4HepEmPars;
-extern __constant__ __device__ struct G4HepEmData g4HepEmData;
+G4HepEmParameters g4HepEmPars;
+G4HepEmData g4HepEmData;
 
-extern __constant__ __device__ int *MCIndex;
+int * MCIndex;
 
 // constexpr float BzFieldValue = 0.1 * copcore::units::tesla;
 constexpr double BzFieldValue = 0;

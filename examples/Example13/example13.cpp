@@ -27,7 +27,7 @@
 #include <VecGeom/management/GeoManager.h>
 #include <VecGeom/management/BVHManager.h>
 #include <VecGeom/gdml/Frontend.h>
-#include <VecGeom/management/CudaManager.h>
+//#include <VecGeom/management/CudaManager.h>
 
 #include <CopCore/SystemOfUnits.h>
 #include <AdePT/ArgParser.h>
@@ -165,7 +165,7 @@ void FreeG4HepEm(G4HepEmState *state)
 void InitBVH()
 {
   vecgeom::cxx::BVHManager::Init();
-  vecgeom::cxx::BVHManager::DeviceInit();
+  //vecgeom::cxx::BVHManager::DeviceInit();
 }
 
 void PrintScoringPerVolume(const vecgeom::VPlacedVolume *placed, const ScoringPerVolume *scoring, int level = 0)
@@ -221,10 +221,10 @@ int main(int argc, char *argv[])
   }
 
   // Load and synchronize the geometry on the GPU
-  std::cout << "synchronizing VecGeom geometry to GPU ...\n";
-  auto &cudaManager = vecgeom::cxx::CudaManager::Instance();
-  cudaManager.LoadGeometry(world);
-  cudaManager.Synchronize();
+  //std::cout << "synchronizing VecGeom geometry to GPU ...\n";
+  //auto &cudaManager = vecgeom::cxx::CudaManager::Instance();
+  //cudaManager.LoadGeometry(world);
+  //cudaManager.Synchronize();
   InitBVH();
 
   auto time_cpu = timer.Stop();

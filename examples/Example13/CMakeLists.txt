@@ -1,42 +1,57 @@
-# SPDX-FileCopyrightText: 2021 CERN
-# SPDX-License-Identifier: Apache-2.0
+cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
 
-if(NOT TARGET G4HepEm::g4HepEm)
-  message(STATUS "Disabling example13 (needs G4HepEm)")
-  return()
-endif()
+set(CMAKE_C_COMPILER clang)
+set(CMAKE_CXX_COMPILER clang++)
+set(CMAKE_CXX_STANDARD 17)
 
-if(Geant4_FOUND)
-  if(NOT Geant4_gdml_FOUND)
-    message(STATUS "Disabling example13 (needs Geant4 with GDML support)")
-    return()
+project(example13)
+
+#Set oneapi install location
+if (NOT ONEAPI_INSTALL_LOCATION)
+    set(ONEAPI_INSTALL_LOCATION /opt/intel/oneapi)
+    message("Set ONEAPI_INSTALL_LOCATION to ${ONEAPI_INSTALL_LOCATION}")
   endif()
-else()
-  message(STATUS "Disabling example13 (needs Geant4)")
-  return()
-endif()
 
-# example13 is the AdePT demo example using material cuts as defined in the input gdml file
-add_executable(example13
-  example13.cpp
-  example13.cu
-  electrons.cu
-  gammas.cu)
-target_link_libraries(example13
-  PRIVATE
-    AdePT
-    CopCore::CopCore
-    VecGeom::vecgeom
-    VecGeom::vecgeomcuda_static
-    VecGeom::vgdml
-    ${Geant4_LIBRARIES}
-    G4HepEm::g4HepEmData
-    G4HepEm::g4HepEmInit
-    G4HepEm::g4HepEmRun
-    CUDA::cudart)
+set(HOME /home/lfield)
+set(VecGeom_DIR ${HOME}/workspace/lib/cmake/VecGeom)
+set(VecCore_DIR ${HOME}/workspace/lib/cmake/VecCore)
+#set(G4HepEm_DIR /home/lfield/repos/AdePT/external/g4hepem/build/InstallTree)
+#set(G4HepEm_INCLUDE_DIR /home/lfield/repos/AdePT/external/g4hepem/G4HepEm/include)
+find_package(Geant4 REQUIRED)
+find_package(VecGeom REQUIRED)
+find_package(VecCore REQUIRED)
+#find_package(G4HepEm REQUIRED)
 
-set_target_properties(example13 PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+include(${Geant4_USE_FILE})
+include_directories(
+  ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmData/include
+   ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmInit/include
+   ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmRun/include/
+   ${HOME}/workspace/include
+   ${HOME}/AdePT/base/inc/CopCore/include
+   ${HOME}/AdePT/base/inc/
+  )
 
-# Tests
-add_test(NAME example13
-  COMMAND $<TARGET_FILE:example13> -gdml_file ${CMAKE_BINARY_DIR}/cms2018.gdml)
+set (SOURCES
+  ${CMAKE_CURRENT_LIST_DIR}/example13
+  ${CMAKE_CURRENT_LIST_DIR}/example13-cu
+)
+add_compile_definitions(MGONGPU_COMMONRAND_ONHOST)
+
+set(CMAKE_THREAD_LIBS_INIT "-lpthread")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread ")
+
+link_directories(
+  ${HOME}/AdePT/external/g4hepem/build/lib
+  ${HOME}/workspace/lib/
+  )
+
+
+add_executable(example13.exe ${SOURCES})
+
+target_compile_options(example13.exe PRIVATE -g -fsycl -ferror-limit=1 -fsycl-unnamed-lambda -Wall -pthread)
+target_link_libraries(example13.exe PRIVATE sycl -fsycl ${Geant4_LIBRARIES} vgdml vecgeom g4HepEmData g4HepEmInit) 
+
+
+
+

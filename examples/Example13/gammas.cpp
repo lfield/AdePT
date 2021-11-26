@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2021 CERN
 // SPDX-License-Identifier: Apache-2.0
 
-#include "example13.cuh"
+#include <CL/sycl.hpp>
+#include <dpct/dpct.hpp>
+#include "example13.dp.hpp"
 
 #include <AdePT/BVHNavigator.h>
 
@@ -19,9 +21,10 @@
 #include <G4HepEmGammaInteractionConversion.icc>
 #include <G4HepEmGammaInteractionPhotoelectric.icc>
 
-__global__ void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
+void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
                                 adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                ScoringPerVolume *scoringPerVolume)
+                                ScoringPerVolume *scoringPerVolume,
+                                sycl::nd_item<3> item_ct1, int * MCIndex)
 {
 #ifdef VECGEOM_FLOAT_PRECISION
   const Precision kPush = 10 * vecgeom::kTolerance;
@@ -29,7 +32,10 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
   const Precision kPush = 0.;
 #endif
   int activeSize = active->size();
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < activeSize; i += blockDim.x * gridDim.x) {
+  for (int i = item_ct1.get_group(2) * item_ct1.get_local_range().get(2) +
+               item_ct1.get_local_id(2);
+       i < activeSize;
+       i += item_ct1.get_local_range().get(2) * item_ct1.get_group_range(2)) {
     const int slot      = (*active)[i];
     Track &currentTrack = gammas[slot];
     auto volume         = currentTrack.navState.Top();
@@ -48,7 +54,7 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
     for (int ip = 0; ip < 3; ++ip) {
       double numIALeft = currentTrack.numIALeft[ip];
       if (numIALeft <= 0) {
-        numIALeft                  = -std::log(currentTrack.Uniform());
+        numIALeft = -sycl::log(currentTrack.Uniform());
         currentTrack.numIALeft[ip] = numIALeft;
       }
       theTrack->SetNumIALeft(numIALeft, ip);
@@ -68,7 +74,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
     double geometryStepLength = BVHNavigator::ComputeStepAndNextVolume(
         currentTrack.pos, currentTrack.dir, geometricalStepLengthFromPhysics, currentTrack.navState, nextState, kPush);
     currentTrack.pos += geometryStepLength * currentTrack.dir;
-    atomicAdd(&globalScoring->neutralSteps, 1);
+    sycl::atomic<unsigned long long>(
+        sycl::global_ptr<unsigned long long>(&globalScoring->neutralSteps))
+        .fetch_add(1);
 
     // Set boundary state in navState so the next step and secondaries get the
     // correct information (currentTrack.navState = nextState only if relocated
@@ -89,7 +97,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
 
     if (nextState.IsOnBoundary()) {
       // For now, just count that we hit something.
-      atomicAdd(&globalScoring->hits, 1);
+      sycl::atomic<unsigned long long>(
+          sycl::global_ptr<unsigned long long>(&globalScoring->hits))
+          .fetch_add(1);
 
       // Kill the particle if it left the world.
       if (nextState.Top() != nullptr) {
@@ -125,7 +135,7 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
         continue;
       }
 
-      double logEnergy = std::log(energy);
+      double logEnergy = sycl::log((double)energy);
       double elKinEnergy, posKinEnergy;
       G4HepEmGammaInteractionConversion::SampleKinEnergies(&g4HepEmData, energy, logEnergy, theMCIndex, elKinEnergy,
                                                            posKinEnergy, &rnge);
@@ -137,8 +147,12 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
 
       Track &electron = secondaries.electrons.NextTrack();
       Track &positron = secondaries.positrons.NextTrack();
-      atomicAdd(&globalScoring->numElectrons, 1);
-      atomicAdd(&globalScoring->numPositrons, 1);
+      sycl::atomic<unsigned long long>(
+          sycl::global_ptr<unsigned long long>(&globalScoring->numElectrons))
+          .fetch_add(1);
+      sycl::atomic<unsigned long long>(
+          sycl::global_ptr<unsigned long long>(&globalScoring->numPositrons))
+          .fetch_add(1);
 
       electron.InitAsSecondary(/*parent=*/currentTrack);
       electron.rngState = newRNG;
@@ -171,7 +185,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
       if (energyEl > LowEnergyThreshold) {
         // Create a secondary electron and sample/compute directions.
         Track &electron = secondaries.electrons.NextTrack();
-        atomicAdd(&globalScoring->numElectrons, 1);
+        sycl::atomic<unsigned long long>(
+            sycl::global_ptr<unsigned long long>(&globalScoring->numElectrons))
+            .fetch_add(1);
 
         electron.InitAsSecondary(/*parent=*/currentTrack);
         electron.rngState = newRNG;
@@ -179,8 +195,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
         electron.dir      = energy * currentTrack.dir - newEnergyGamma * newDirGamma;
         electron.dir.Normalize();
       } else {
-        atomicAdd(&globalScoring->energyDeposit, energyEl);
-        atomicAdd(&scoringPerVolume->energyDeposit[volumeID], energyEl);
+        dpct::atomic_fetch_add(&globalScoring->energyDeposit, energyEl);
+        dpct::atomic_fetch_add(&scoringPerVolume->energyDeposit[volumeID],
+                               energyEl);
       }
 
       // Check the new gamma energy and deposit if below threshold.
@@ -191,8 +208,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
         // The current track continues to live.
         activeQueue->push_back(slot);
       } else {
-        atomicAdd(&globalScoring->energyDeposit, newEnergyGamma);
-        atomicAdd(&scoringPerVolume->energyDeposit[volumeID], newEnergyGamma);
+        dpct::atomic_fetch_add(&globalScoring->energyDeposit, newEnergyGamma);
+        dpct::atomic_fetch_add(&scoringPerVolume->energyDeposit[volumeID],
+                               newEnergyGamma);
         // The current track is killed by not enqueuing into the next activeQueue.
       }
       break;
@@ -209,7 +227,9 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
       if (photoElecE > theLowEnergyThreshold) {
         // Create a secondary electron and sample directions.
         Track &electron = secondaries.electrons.NextTrack();
-        atomicAdd(&globalScoring->numElectrons, 1);
+        sycl::atomic<unsigned long long>(
+            sycl::global_ptr<unsigned long long>(&globalScoring->numElectrons))
+            .fetch_add(1);
 
         double dirGamma[] = {currentTrack.dir.x(), currentTrack.dir.y(), currentTrack.dir.z()};
         double dirPhotoElec[3];
@@ -222,7 +242,7 @@ __global__ void TransportGammas(Track *gammas, const adept::MParray *active, Sec
       } else {
         edep = energy;
       }
-      atomicAdd(&globalScoring->energyDeposit, edep);
+      dpct::atomic_fetch_add(&globalScoring->energyDeposit, edep);
       // The current track is killed by not enqueuing into the next activeQueue.
       break;
     }
