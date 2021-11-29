@@ -111,8 +111,8 @@ void InitParticleQueues(ParticleQueues queues, size_t Capacity)
 
 // Kernel function to initialize a set of primary particles.
 void InitPrimaries(ParticleGenerator generator, int startEvent, int numEvents, double energy,
-                              const vecgeom::VPlacedVolume *world, GlobalScoring *globalScoring, bool rotatingParticleGun,
-                              sycl::nd_item<3> item_ct1)
+                              const vecgeom::VPlacedVolume *world, GlobalScoring *globalScoring, bool rotatingParticleGun, sycl::nd_item<3> item_ct1)
+     
 {
   for (int i = item_ct1.get_group(2) * item_ct1.get_local_range().get(2) +
                item_ct1.get_local_id(2);
@@ -169,7 +169,7 @@ void ClearQueue(adept::MParray *queue)
 
 void example13(int numParticles, double energy, int batch, const int *MCIndex_host,
                ScoringPerVolume *scoringPerVolume_host, GlobalScoring *globalScoring_host, int numVolumes,
-               int numPlaced, G4HepEmState *state, bool rotatingParticleGun)
+               int numPlaced, G4HepEmState *state, bool rotatingParticleGun, const vecgeom::VPlacedVolume *world)
 {
   sycl::queue q_ct1(sycl::default_selector{});
   //InitG4HepEmGPU(state);
@@ -321,7 +321,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
 
   vecgeom::Stopwatch timer;
   timer.Start();
-
+  
   std::cout << std::endl << "Simulating particles ";
   const bool detailed = (numParticles / batch) < 50;
   if (!detailed) {
@@ -344,14 +344,25 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
     constexpr int InitThreads = 32;
     int initBlocks            = (chunk + InitThreads - 1) / InitThreads;
     ParticleGenerator electronGenerator(electrons.tracks, electrons.slotManager, electrons.queues.currentlyActive);
-    //    auto world_dev = vecgeom::cxx::CudaManager::Instance().world_gpu();
+    //auto world_dev = vecgeom::cxx::CudaManager::Instance().world_gpu();
     // InitPrimaries<<<initBlocks, InitThreads, 0, stream>>>(electronGenerator, startEvent, chunk, energy, world_dev,
     //                                                    globalScoring, rotatingParticleGun);
-    /*
-    DPCT1003:12: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    //COPCORE_CUDA_CHECK((stream->wait(), 0));
+    {
+      q_ct1.submit([&](sycl::handler &cgh) {
+        cgh.parallel_for(
+            sycl::nd_range<3>(sycl::range<3>(1, 1, initBlocks) *
+                                  sycl::range<3>(1, 1, InitThreads),
+                              sycl::range<3>(1, 1, InitThreads)),
+            [=](sycl::nd_item<3> item_ct1) {
+              InitPrimaries(electronGenerator, startEvent, chunk, energy, world,
+                            globalScoring, rotatingParticleGun);
+            });
+      });
+      q_ct1.wait();
+    } 
+
+    std::cout << " ran to heere \n" << std::flush;
+    return;
 
     stats->inFlight[ParticleType::Electron] = chunk;
     stats->inFlight[ParticleType::Positron] = 0;

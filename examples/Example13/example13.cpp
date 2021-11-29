@@ -242,7 +242,7 @@ int main(int argc, char *argv[])
   GlobalScoring globalScoring;
 
   example13(particles, energy, batch, MCCindex, &scoringPerVolume, &globalScoring, NumVolumes, NumPlaced, &hepEmState,
-            rotatingParticleGun);
+            rotatingParticleGun, world);
 
   std::cout << std::endl;
   std::cout << std::endl;

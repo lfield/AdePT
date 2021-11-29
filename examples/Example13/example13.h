@@ -4,6 +4,8 @@
 #ifndef EXAMPLE13_H
 #define EXAMPLE13_H
 
+#include <VecGeom/management/GeoManager.h>
+
 struct G4HepEmState;
 
 // Data structures for scoring. The accessors must make sure to use atomic operations if needed.
@@ -27,6 +29,6 @@ struct ScoringPerVolume {
 
 // Interface between C++ and CUDA.
 void example13(int numParticles, double energy, int batch, const int *MCCindex, ScoringPerVolume *scoringPerVolume,
-               GlobalScoring *globalScoring, int numVolumes, int numPlaced, G4HepEmState *state, bool rotatingParticleGun);
+               GlobalScoring *globalScoring, int numVolumes, int numPlaced, G4HepEmState *state, bool rotatingParticleGun, const vecgeom::VPlacedVolume *world);
 
 #endif
