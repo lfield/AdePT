@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <CL/sycl.hpp>
+#include <dpct/dpct.hpp>
 #include "example13.h"
 #include "example13-cu.h"
 
 #include <AdePT/Atomic.h>
-#include <AdePT/BVHNavigator.h>
+//#include <AdePT//LoopNavigator.h>
 #include <AdePT/MParray.h>
 
 #include <CopCore/Global.h>
@@ -34,13 +35,7 @@
 #include <stdio.h>
 #include <chrono>
 
-//dpct::constant_memory<struct G4HepEmParameters, 0> g4HepEmPars;
-//dpct::constant_memory<struct G4HepEmData, 0> g4HepEmData;
-
-//dpct::constant_memory<int *, 0> MCIndex;
-
-//dpct::constant_memory<int, 0> Zero(0);
-
+class MParray;
 void InitG4HepEmGPU(G4HepEmState *state)
 {
   // Copy to GPU.
@@ -140,7 +135,7 @@ void InitPrimaries(ParticleGenerator generator, int startEvent, int numEvents, d
       track.dir = {1.0, 0, 0};
     }
     track.navState.Clear();
-    BVHNavigator::LocatePointIn(world, track.pos, track.navState, true);
+    //LoopNavigator::LocatePointIn(world, track.pos, track.navState, true);
 
     sycl::atomic<unsigned long long>(
         sycl::global_ptr<unsigned long long>(&globalScoring->numElectrons))
@@ -167,29 +162,23 @@ void ClearQueue(adept::MParray *queue)
   queue->clear();
 }
 
-void example13(int numParticles, double energy, int batch, const int *MCIndex_host,
-               ScoringPerVolume *scoringPerVolume_host, GlobalScoring *globalScoring_host, int numVolumes,
+void example13(int numParticles, double energy, int batch, const int *MCIndex,
+               ScoringPerVolume *scoringPerVolume, GlobalScoring *globalScoring, int numVolumes,
                int numPlaced, G4HepEmState *state, bool rotatingParticleGun, const vecgeom::VPlacedVolume *world)
 {
   sycl::queue q_ct1(sycl::default_selector{});
-  //InitG4HepEmGPU(state);
+  std::cout <<  "Running on "
+	        << q_ct1.get_device().get_info<cl::sycl::info::device::name>()
+            << std::endl;
+  dpct::device_ext &dev_ct1 = dpct::get_current_device();
+
+  // Copy state to device.
+  auto state_dev = malloc_device<G4HepEmState>(sizeof(state), q_ct1);
+  q_ct1.memcpy(state_dev, state, sizeof(state)).wait();
 
   // Transfer MC indices.
-  int *MCIndex_dev = nullptr;
-  //  COPCORE_CUDA_CHECK(cudaMalloc(&MCIndex_dev, sizeof(int) * numVolumes));
-  /*
-  DPCT1003:1: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK(
-  //   (q_ct1.memcpy(MCIndex_dev, MCIndex_host, sizeof(int) * numVolumes).wait(),
-  //   0));
-  /*
-  DPCT1003:2: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK(
-  //   (q_ct1.memcpy(MCIndex.get_ptr(), &MCIndex_dev, sizeof(int *)).wait(), 0));
+  auto MCIndex_dev = malloc_device<int>(sizeof(int) * numVolumes, q_ct1);
+  q_ct1.memcpy(MCIndex_dev, MCIndex, sizeof(int) * numVolumes).wait();
 
   // Capacity of the different containers aka the maximum number of particles.
   constexpr int Capacity = 256 * 1024;
@@ -219,30 +208,19 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
 
   ParticleType particles[ParticleType::NumParticleTypes];
   for (int i = 0; i < ParticleType::NumParticleTypes; i++) {
-    // COPCORE_CUDA_CHECK(cudaMalloc(&particles[i].tracks, TracksSize));
-
-    //COPCORE_CUDA_CHECK(cudaMalloc(&particles[i].slotManager, ManagerSize));
-
-    //COPCORE_CUDA_CHECK(cudaMalloc(&particles[i].queues.currentlyActive, QueueSize));
-    //COPCORE_CUDA_CHECK(cudaMalloc(&particles[i].queues.nextActive, QueueSize));
-    //InitParticleQueues<<<1, 1>>>(particles[i].queues, Capacity);
-
-    /*
-    DPCT1003:3: Migrated API does not return error code. (*, 0) is inserted. You
-    may need to rewrite this code.
-    */
-    // COPCORE_CUDA_CHECK((particles[i].stream = dev_ct1.create_queue(), 0));
-    /*
-    DPCT1027:4: The call to cudaEventCreate was replaced with 0 because this
-    call is redundant in DPC++.
-    */
-    COPCORE_CUDA_CHECK(0);
+    particles[i].tracks = malloc_device<Track>(sizeof(Track) * TracksSize, q_ct1);
+    particles[i].slotManager = malloc_device<SlotManager>(sizeof(SlotManager) * ManagerSize, q_ct1);
+    particles[i].queues.currentlyActive = malloc_device<adept::MParray>(sizeof(adept::MParray) * QueueSize, q_ct1);
+    particles[i].queues.nextActive = malloc_device<adept::MParray>(sizeof(adept::MParray) * QueueSize, q_ct1);
+    q_ct1.submit([&](sycl::handler &cgh) {
+      auto queues = particles[i].queues;
+       cgh.single_task<class Init>([=]() {
+         //InitParticleQueues(queues, Capacity);
+      });
+    });   
+    particles[i].stream = dev_ct1.create_queue();
   }
-  /*
-  DPCT1003:5: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK((dev_ct1.queues_wait_and_throw(), 0));
+  dev_ct1.queues_wait_and_throw();
 
   ParticleType &electrons = particles[ParticleType::Electron];
   ParticleType &positrons = particles[ParticleType::Positron];
@@ -250,74 +228,31 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
 
   // Create a stream to synchronize kernels of all particle types.
   sycl::queue *stream;
-  /*
-  DPCT1003:6: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK((stream = dev_ct1.create_queue(), 0));
+  stream = dev_ct1.create_queue();
 
   // Allocate memory to score charged track length and energy deposit per volume.
-  double *chargedTrackLength = nullptr;
-  //  COPCORE_CUDA_CHECK(cudaMalloc(&chargedTrackLength, sizeof(double) * numPlaced));
-  /*
-  DPCT1003:7: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK(
-  //    (q_ct1.memset(chargedTrackLength, 0, sizeof(double) * numPlaced).wait(),
-  //     0));
-  double *energyDeposit = nullptr;
-  //  COPCORE_CUDA_CHECK(cudaMalloc(&energyDeposit, sizeof(double) * numPlaced));
-  /*
-  DPCT1003:8: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  // COPCORE_CUDA_CHECK(
-  //    (q_ct1.memset(energyDeposit, 0, sizeof(double) * numPlaced).wait(), 0));
+  auto chargedTrackLength = malloc_device<double>(sizeof(double) * numPlaced, q_ct1);
+  q_ct1.memset(chargedTrackLength, 0, sizeof(double) * numPlaced).wait();
+  
+  auto energyDeposit = malloc_device<double>(sizeof(double) * numPlaced, q_ct1);
+  q_ct1.memset(energyDeposit, 0, sizeof(double) * numPlaced).wait();
 
   // Allocate and initialize scoring and statistics.
-  GlobalScoring *globalScoring = nullptr;
-  //COPCORE_CUDA_CHECK(cudaMalloc(&globalScoring, sizeof(GlobalScoring)));
-  /*
-  DPCT1003:9: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK(
-  //  (q_ct1.memset(globalScoring, 0, sizeof(GlobalScoring)).wait(), 0));
+  auto globalScoring_dev = malloc_device<GlobalScoring>(sizeof(GlobalScoring), q_ct1);
+  q_ct1.memset(globalScoring_dev, 0, sizeof(GlobalScoring)).wait();
+  
+  auto scoringPerVolume_dev = malloc_device<ScoringPerVolume>(sizeof(ScoringPerVolume), q_ct1);
+  scoringPerVolume_dev->chargedTrackLength = chargedTrackLength;
+  scoringPerVolume_dev->energyDeposit = energyDeposit;
+  q_ct1.memcpy(scoringPerVolume, scoringPerVolume_dev, sizeof(ScoringPerVolume)).wait();
 
-  ScoringPerVolume *scoringPerVolume = nullptr;
-  ScoringPerVolume scoringPerVolume_devPtrs;
-  scoringPerVolume_devPtrs.chargedTrackLength = chargedTrackLength;
-  scoringPerVolume_devPtrs.energyDeposit      = energyDeposit;
-  // COPCORE_CUDA_CHECK(cudaMalloc(&scoringPerVolume, sizeof(ScoringPerVolume)));
-  //COPCORE_CUDA_CHECK(
-      /*
-      DPCT1003:10: Migrated API does not return error code. (*, 0) is inserted.
-      You may need to rewrite this code.
-      */
-  //    (q_ct1
-  //         .memcpy(scoringPerVolume, &scoringPerVolume_devPtrs,
-  //                 sizeof(ScoringPerVolume))
-  //         .wait(),
-  //     0));
-
-  Stats *stats_dev = nullptr;
-  //COPCORE_CUDA_CHECK(cudaMalloc(&stats_dev, sizeof(Stats)));
-  Stats *stats = nullptr;
-  //COPCORE_CUDA_CHECK(cudaMallocHost(&stats, sizeof(Stats)));
-
+  auto stats = malloc_host<Stats>(sizeof(Stats), q_ct1);
+  auto stats_dev = malloc_device<Stats>(sizeof(Stats), q_ct1);
+  
   // Allocate memory to hold a "vanilla" SlotManager to initialize for each batch.
   SlotManager slotManagerInit(Capacity);
-  SlotManager *slotManagerInit_dev = nullptr;
-  //COPCORE_CUDA_CHECK(cudaMalloc(&slotManagerInit_dev, sizeof(SlotManager)));
-  /*
-  DPCT1003:11: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK(
-  //   (q_ct1.memcpy(slotManagerInit_dev, &slotManagerInit, sizeof(SlotManager))
-  //           .wait(),
-  //    0));
+  auto  slotManagerInit_dev = malloc_device<SlotManager>(sizeof(SlotManager), q_ct1);
+  q_ct1.memcpy(slotManagerInit_dev, &slotManagerInit, sizeof(SlotManager)).wait();
 
   vecgeom::Stopwatch timer;
   timer.Start();
@@ -336,8 +271,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
     int chunk = std::min(left, batch);
 
     for (int i = 0; i < ParticleType::NumParticleTypes; i++) {
-      //      COPCORE_CUDA_CHECK(cudaMemcpyAsync(particles[i].slotManager, slotManagerInit_dev, ManagerSize,
-      //                                 cudaMemcpyDeviceToDevice, stream));
+      //q_ct1.memcpy(particles[i].slotManager, slotManagerInit_dev, ManagerSize).wait();
     }
 
     // Initialize primary particles.
@@ -345,8 +279,6 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
     int initBlocks            = (chunk + InitThreads - 1) / InitThreads;
     ParticleGenerator electronGenerator(electrons.tracks, electrons.slotManager, electrons.queues.currentlyActive);
     //auto world_dev = vecgeom::cxx::CudaManager::Instance().world_gpu();
-    // InitPrimaries<<<initBlocks, InitThreads, 0, stream>>>(electronGenerator, startEvent, chunk, energy, world_dev,
-    //                                                    globalScoring, rotatingParticleGun);
     {
       q_ct1.submit([&](sycl::handler &cgh) {
         cgh.parallel_for(
@@ -355,14 +287,11 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
                               sycl::range<3>(1, 1, InitThreads)),
             [=](sycl::nd_item<3> item_ct1) {
               InitPrimaries(electronGenerator, startEvent, chunk, energy, world,
-                            globalScoring, rotatingParticleGun);
+                            globalScoring, rotatingParticleGun, item_ct1);
             });
       });
-      q_ct1.wait();
     } 
-
-    std::cout << " ran to heere \n" << std::flush;
-    return;
+    dev_ct1.queues_wait_and_throw();
 
     stats->inFlight[ParticleType::Electron] = chunk;
     stats->inFlight[ParticleType::Positron] = 0;
@@ -389,29 +318,31 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
         transportBlocks = (numElectrons + TransportThreads - 1) / TransportThreads;
         transportBlocks = std::min(transportBlocks, MaxBlocks);
 
-	//        TransportElectrons<<<transportBlocks, TransportThreads, 0, electrons.stream>>>(
-        //    electrons.tracks, electrons.queues.currentlyActive, secondaries, electrons.queues.nextActive, globalScoring,
-	//   scoringPerVolume);
 
-        /*
-        DPCT1012:13: Detected kernel execution time measurement pattern and
-        generated an initial code for time measurements in SYCL. You can change
-        the way time is measured depending on your goals.
-        */
-        /*
-        DPCT1024:14: The original code returned the error code that was further
-        consumed by the program logic. This original code was replaced with 0.
-        You may need to rewrite the program logic consuming the error code.
-        */
-        electrons.event_ct1 = std::chrono::steady_clock::now();
-        COPCORE_CUDA_CHECK(
-            (electrons.event = electrons.stream->submit_barrier(), 0));
-        /*
-        DPCT1003:15: Migrated API does not return error code. (*, 0) is
-        inserted. You may need to rewrite this code.
-        */
-        COPCORE_CUDA_CHECK(
-            (electrons.event = stream->submit_barrier({electrons.event}), 0));
+      electrons.stream->submit([&](sycl::handler &cgh) {
+        Track *electronsTracks = electrons.tracks;
+        adept::MParray *currentlyActive = electrons.queues.currentlyActive;
+        adept::MParray *nextActive = electrons.queues.nextActive;
+        cgh.parallel_for(
+            sycl::nd_range<3>(sycl::range<3>(1, 1, transportBlocks) *
+                                  sycl::range<3>(1, 1, TransportThreads),
+                              sycl::range<3>(1, 1, TransportThreads)),
+            [=](sycl::nd_item<3> item_ct1) {
+             /* TransportElectrons<true>(electronsTracks,
+                                       currentlyActive,
+                                       secondaries, 
+                                       nextActive,
+                                       globalScoring_dev,
+                                       scoringPerVolume_dev,
+                                       item_ct1);
+            */
+            });
+      });
+      
+      electrons.event_ct1 = std::chrono::steady_clock::now();
+
+      electrons.event.wait();
+        
       }
 
       // *** POSITRONS ***
@@ -420,29 +351,27 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
         transportBlocks = (numPositrons + TransportThreads - 1) / TransportThreads;
         transportBlocks = std::min(transportBlocks, MaxBlocks);
 
-	//        TransportPositrons<<<transportBlocks, TransportThreads, 0, positrons.stream>>>(
-        //    positrons.tracks, positrons.queues.currentlyActive, secondaries, positrons.queues.nextActive, globalScoring,
-	//   scoringPerVolume);
-
-        /*
-        DPCT1012:16: Detected kernel execution time measurement pattern and
-        generated an initial code for time measurements in SYCL. You can change
-        the way time is measured depending on your goals.
-        */
-        /*
-        DPCT1024:17: The original code returned the error code that was further
-        consumed by the program logic. This original code was replaced with 0.
-        You may need to rewrite the program logic consuming the error code.
-        */
-        positrons.event_ct1 = std::chrono::steady_clock::now();
-        COPCORE_CUDA_CHECK(
-            (positrons.event = positrons.stream->submit_barrier(), 0));
-        /*
-        DPCT1003:18: Migrated API does not return error code. (*, 0) is
-        inserted. You may need to rewrite this code.
-        */
-        COPCORE_CUDA_CHECK(
-            (positrons.event = stream->submit_barrier({positrons.event}), 0));
+	    positrons.stream->submit([&](sycl::handler &cgh) {
+          Track *positronsTracks = positrons.tracks;
+          adept::MParray *pCurrentlyActive = positrons.queues.currentlyActive;
+          adept::MParray *pNextActive = positrons.queues.nextActive;
+          cgh.parallel_for(
+            sycl::nd_range<3>(sycl::range<3>(1, 1, transportBlocks) *
+                              sycl::range<3>(1, 1, TransportThreads),
+                              sycl::range<3>(1, 1, TransportThreads)),
+            [=](sycl::nd_item<3> item_ct1) {
+             /*   TransportElectrons<false>(positronsTracks,
+                                        pCurrentlyActive,
+                                        secondaries,
+                                        pNextActive,
+                                        globalScoring_dev,
+                                        scoringPerVolume_dev,
+                                        item_ct1);
+            */
+	    });
+      });
+      positrons.event_ct1 = std::chrono::steady_clock::now();
+      positrons.event.wait();
       }
 
       // *** GAMMAS ***
@@ -450,29 +379,27 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
       if (numGammas > 0) {
         transportBlocks = (numGammas + TransportThreads - 1) / TransportThreads;
         transportBlocks = std::min(transportBlocks, MaxBlocks);
-
-	//        TransportGammas<<<transportBlocks, TransportThreads, 0, gammas.stream>>>(
-        //    gammas.tracks, gammas.queues.currentlyActive, secondaries, gammas.queues.nextActive, globalScoring,
-	//   scoringPerVolume);
-
-        /*
-        DPCT1012:19: Detected kernel execution time measurement pattern and
-        generated an initial code for time measurements in SYCL. You can change
-        the way time is measured depending on your goals.
-        */
-        /*
-        DPCT1024:20: The original code returned the error code that was further
-        consumed by the program logic. This original code was replaced with 0.
-        You may need to rewrite the program logic consuming the error code.
-        */
-        gammas.event_ct1 = std::chrono::steady_clock::now();
-        COPCORE_CUDA_CHECK((gammas.event = gammas.stream->submit_barrier(), 0));
-        /*
-        DPCT1003:21: Migrated API does not return error code. (*, 0) is
-        inserted. You may need to rewrite this code.
-        */
-        COPCORE_CUDA_CHECK(
-            (gammas.event = stream->submit_barrier({gammas.event}), 0));
+        gammas.stream->submit([&](sycl::handler &cgh) {
+        Track *gammasTracks = gammas.tracks;
+        adept::MParray *gCurrentlyActive = gammas.queues.currentlyActive;
+        adept::MParray *gNextActive = gammas.queues.nextActive;
+        cgh.parallel_for(
+          sycl::nd_range<3>(sycl::range<3>(1, 1, transportBlocks) *
+                            sycl::range<3>(1, 1, TransportThreads),
+                            sycl::range<3>(1, 1, TransportThreads)),
+           [=](sycl::nd_item<3> item_ct1) {
+           /*   TransportGammas(gammasTracks,
+                              gCurrentlyActive,
+                              secondaries,
+                              gNextActive,
+                              globalScoring_dev,
+                              scoringPerVolume_dev,
+                              item_ct1);
+            */
+            });
+      });
+      gammas.event_ct1 = std::chrono::steady_clock::now();
+      gammas.event.wait();
       }
 
       // *** END OF TRANSPORT ***
@@ -480,23 +407,15 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
       // The events ensure synchronization before finishing this iteration and
       // copying the Stats back to the host.
       AllParticleQueues queues = {{electrons.queues, positrons.queues, gammas.queues}};
-      stream->parallel_for(
-          sycl::nd_range<3>(sycl::range<3>(1, 1, 1), sycl::range<3>(1, 1, 1)),
-          [=](sycl::nd_item<3> item_ct1) {
-            FinishIteration(queues, stats_dev);
-          });
-      /*
-      DPCT1003:22: Migrated API does not return error code. (*, 0) is inserted.
-      You may need to rewrite this code.
-      */
-      COPCORE_CUDA_CHECK((stream->memcpy(stats, stats_dev, sizeof(Stats)), 0));
+      q_ct1.submit([&](sycl::handler &cgh) {
+        cgh.single_task<class Finish>([=]() {
+          FinishIteration(queues, stats_dev);
+        });
+      });
+      q_ct1.memcpy(stats, stats_dev, sizeof(Stats));
 
       // Finally synchronize all kernels.
-      /*
-      DPCT1003:23: Migrated API does not return error code. (*, 0) is inserted.
-      You may need to rewrite this code.
-      */
-      COPCORE_CUDA_CHECK((stream->wait(), 0));
+      q_ct1.wait();
 
       // Count the number of particles in flight.
       inFlight = 0;
@@ -530,15 +449,8 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
         if (inFlightParticles == 0) {
           continue;
         }
-
-	//  ClearQueue<<<1, 1, 0, stream>>>(pType.queues.currentlyActive);
       }
-      /*
-      DPCT1003:24: Migrated API does not return error code. (*, 0) is inserted.
-      You may need to rewrite this code.
-      */
-      //COPCORE_CUDA_CHECK((stream->wait(), 0));
-    }
+     }
   }
   std::cout << "done!" << std::endl;
 
@@ -546,119 +458,27 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex_ho
   std::cout << "Run time: " << time << "\n";
 
   // Transfer back scoring.
-  /*
-  DPCT1003:25: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK(
-      (q_ct1.memcpy(globalScoring_host, globalScoring, sizeof(GlobalScoring))
-           .wait(),
-       0));
+  q_ct1.memcpy(globalScoring, globalScoring_dev, sizeof(GlobalScoring)).wait();
 
   // Transfer back the scoring per volume (charged track length and energy deposit).
-  /*
-  DPCT1003:26: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((q_ct1
-                          .memcpy(scoringPerVolume_host->chargedTrackLength,
-                                  scoringPerVolume_devPtrs.chargedTrackLength,
-                                  sizeof(double) * numPlaced)
-                          .wait(),
-                      0));
-  /*
-  DPCT1003:27: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((q_ct1
-                          .memcpy(scoringPerVolume_host->energyDeposit,
-                                  scoringPerVolume_devPtrs.energyDeposit,
-                                  sizeof(double) * numPlaced)
-                          .wait(),
-                      0));
+  q_ct1.memcpy(&scoringPerVolume, &scoringPerVolume_dev, sizeof(ScoringPerVolume)).wait();
 
   // Free resources.
-  /*
-  DPCT1003:28: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(MCIndex_dev, q_ct1), 0));
-  /*
-  DPCT1003:29: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(chargedTrackLength, q_ct1), 0));
-  /*
-  DPCT1003:30: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(energyDeposit, q_ct1), 0));
-
-  /*
-  DPCT1003:31: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(globalScoring, q_ct1), 0));
-  /*
-  DPCT1003:32: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(scoringPerVolume, q_ct1), 0));
-  /*
-  DPCT1003:33: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(stats_dev, q_ct1), 0));
-  /*
-  DPCT1003:34: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(stats, q_ct1), 0));
-  /*
-  DPCT1003:35: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  COPCORE_CUDA_CHECK((sycl::free(slotManagerInit_dev, q_ct1), 0));
-
-  /*
-  DPCT1003:36: Migrated API does not return error code. (*, 0) is inserted. You
-  may need to rewrite this code.
-  */
-  //COPCORE_CUDA_CHECK((dev_ct1.destroy_queue(stream), 0));
+  sycl::free(MCIndex_dev, q_ct1);
+  sycl::free(chargedTrackLength, q_ct1);
+  sycl::free(energyDeposit, q_ct1);
+  sycl::free(globalScoring, q_ct1);
+  sycl::free(&scoringPerVolume, q_ct1);
+  sycl::free(stats_dev, q_ct1);
+  sycl::free(stats, q_ct1);
+  sycl::free(slotManagerInit_dev, q_ct1);
+  dev_ct1.destroy_queue(stream);
 
   for (int i = 0; i < ParticleType::NumParticleTypes; i++) {
-    /*
-    DPCT1003:37: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    COPCORE_CUDA_CHECK((sycl::free(particles[i].tracks, q_ct1), 0));
-    /*
-    DPCT1003:38: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    COPCORE_CUDA_CHECK((sycl::free(particles[i].slotManager, q_ct1), 0));
-
-    /*
-    DPCT1003:39: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    COPCORE_CUDA_CHECK(
-        (sycl::free(particles[i].queues.currentlyActive, q_ct1), 0));
-    /*
-    DPCT1003:40: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    COPCORE_CUDA_CHECK((sycl::free(particles[i].queues.nextActive, q_ct1), 0));
-
-    /*
-    DPCT1003:41: Migrated API does not return error code. (*, 0) is inserted.
-    You may need to rewrite this code.
-    */
-    //COPCORE_CUDA_CHECK((dev_ct1.destroy_queue(particles[i].stream), 0));
-    /*
-    DPCT1027:42: The call to cudaEventDestroy was replaced with 0 because this
-    call is redundant in DPC++.
-    */
-    COPCORE_CUDA_CHECK(0);
+    sycl::free(particles[i].tracks, q_ct1);
+    sycl::free(particles[i].slotManager, q_ct1);
+    sycl::free(particles[i].queues.currentlyActive, q_ct1);
+    sycl::free(particles[i].queues.nextActive, q_ct1);
+    dev_ct1.destroy_queue(particles[i].stream);
   }
 }

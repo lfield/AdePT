@@ -115,7 +115,7 @@ public:
   {
     int slot = fSlotManager->NextSlot();
     if (slot == -1) {
-      COPCORE_EXCEPTION("No slot available in ParticleGenerator::NextTrack");
+      //COPCORE_EXCEPTION("No slot available in ParticleGenerator::NextTrack");
     }
     fActiveQueue->push_back(slot);
     return fTracks[slot];
@@ -130,17 +130,17 @@ struct Secondaries {
 };
 
 // Kernels in different TUs.
-void TransportElectrons(Track *electrons, const adept::MParray *active, Secondaries secondaries,
+template <bool IsElectron>
+SYCL_EXTERNAL void TransportElectrons(Track *electrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                   ScoringPerVolume *scoringPerVolume);
-void TransportPositrons(Track *positrons, const adept::MParray *active, Secondaries secondaries,
+                                   ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1);
+SYCL_EXTERNAL void TransportPositrons(Track *positrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                   ScoringPerVolume *scoringPerVolume);
+                                   ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1);
 
-void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
+SYCL_EXTERNAL void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
                                 adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                ScoringPerVolume *scoringPerVolume,
-                                sycl::nd_item<3> item_ct1, int * MCIndex);
+                                ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1);
 
 // Constant data structures from G4HepEm accessed by the kernels.
 // (defined in TestEm3.cu)

@@ -23,8 +23,7 @@
 
 void TransportGammas(Track *gammas, const adept::MParray *active, Secondaries secondaries,
                                 adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                ScoringPerVolume *scoringPerVolume,
-                                sycl::nd_item<3> item_ct1, int * MCIndex)
+                                ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1)
 {
 #ifdef VECGEOM_FLOAT_PRECISION
   const Precision kPush = 10 * vecgeom::kTolerance;

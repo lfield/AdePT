@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
 
 set(CMAKE_C_COMPILER clang)
 set(CMAKE_CXX_COMPILER clang++)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 project(example13)
 
@@ -24,9 +24,9 @@ find_package(VecCore REQUIRED)
 
 include(${Geant4_USE_FILE})
 include_directories(
-  ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmData/include
+   ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmData/include
    ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmInit/include
-   ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmRun/include/
+   ${HOME}/AdePT/external/g4hepem/G4HepEm/G4HepEmRun/include
    ${HOME}/workspace/include
    ${HOME}/AdePT/base/inc/CopCore/include
    ${HOME}/AdePT/base/inc/

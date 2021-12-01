@@ -32,7 +32,7 @@ template <bool IsElectron>
 static __dpct_inline__ void TransportElectrons(
     Track *electrons, const adept::MParray *active, Secondaries &secondaries,
     adept::MParray *activeQueue, GlobalScoring *globalScoring,
-    ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1, int *MCIndex)
+    ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1)
 {
 #ifdef VECGEOM_FLOAT_PRECISION
   const Precision kPush = 10 * vecgeom::kTolerance;
@@ -373,14 +373,14 @@ static __dpct_inline__ void TransportElectrons(
 // Instantiate kernels for electrons and positrons.
 void TransportElectrons(Track *electrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                   ScoringPerVolume *scoringPerVolume)
+                                   ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1)
 {
-  TransportElectrons</*IsElectron*/ true>(electrons, active, secondaries, activeQueue, globalScoring, scoringPerVolume);
+  TransportElectrons</*IsElectron*/ true>(electrons, active, secondaries, activeQueue, globalScoring, scoringPerVolume, sycl::nd_item<3> item_ct1);
 }
 void TransportPositrons(Track *positrons, const adept::MParray *active, Secondaries secondaries,
                                    adept::MParray *activeQueue, GlobalScoring *globalScoring,
-                                   ScoringPerVolume *scoringPerVolume)
+                                   ScoringPerVolume *scoringPerVolume, sycl::nd_item<3> item_ct1)
 {
   TransportElectrons</*IsElectron*/ false>(positrons, active, secondaries, activeQueue, globalScoring,
-                                           scoringPerVolume);
+                                           scoringPerVolume, sycl::nd_item<3> item_ct1);
 }
