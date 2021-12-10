@@ -111,7 +111,7 @@ __host__ __device__ double fieldPropagatorConstBz::ComputeStepAndNextVolume(
     do {
       vecgeom::Vector3D<Precision> endPosition  = position;
       vecgeom::Vector3D<Precision> endDirection = direction;
-      double safeMove                        = min(remains, safeLength);
+      double safeMove                        = sycl::min(remains, safeLength);
 
       // fieldPropagatorConstBz( aTrack, BzValue, endPosition, endDirection ); -- Doesn't work
       helixBz.DoStep<vecgeom::Vector3D<Precision>,Precision,int>(position, direction, charge, momentumMag, safeMove, endPosition, endDirection);

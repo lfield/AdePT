@@ -49,7 +49,7 @@ __host__ __device__ static void multiply9x9(const uint64_t *in1, const uint64_t 
       // write and should work in older versions of CUDA.
       uint64_t lower = fac1 * fac2;
       uint64_t upper = __umul64hi(fac1, fac2);
-#elif defined(__SIZEOF_INT128__)
+#elif defined(__SIZEOF_INT128__) && !defined(SYCL_LANGUAGE_VERSION)
       unsigned __int128 prod = fac1;
       prod                   = prod * fac2;
 

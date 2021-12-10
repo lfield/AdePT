@@ -30,11 +30,12 @@ include_directories(
    ${HOME}/workspace/include
    ${HOME}/AdePT/base/inc/CopCore/include
    ${HOME}/AdePT/base/inc/
+   ${HOME}/AdePT/magneticfield/inc/
   )
 
 set (SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/example13
-  ${CMAKE_CURRENT_LIST_DIR}/example13-cu
+  ${CMAKE_CURRENT_LIST_DIR}/example13.dp
 )
 add_compile_definitions(MGONGPU_COMMONRAND_ONHOST)
 

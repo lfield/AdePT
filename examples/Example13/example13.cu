@@ -4,10 +4,10 @@
 #include <CL/sycl.hpp>
 #include <dpct/dpct.hpp>
 #include "example13.h"
-#include "example13-cu.h"
+#include "example13.dp.h"
 
 #include <AdePT/Atomic.h>
-//#include <AdePT//LoopNavigator.h>
+//#include <AdePT/BVHNavigator.h>
 #include <AdePT/MParray.h>
 
 #include <CopCore/Global.h>
@@ -135,8 +135,7 @@ void InitPrimaries(ParticleGenerator generator, int startEvent, int numEvents, d
       track.dir = {1.0, 0, 0};
     }
     track.navState.Clear();
-    //LoopNavigator::LocatePointIn(world, track.pos, track.navState, true);
-
+    //BVHNavigator::LocatePointIn(world, track.pos, track.navState, true);
     sycl::atomic<unsigned long long>(
         sycl::global_ptr<unsigned long long>(&globalScoring->numElectrons))
         .fetch_add(1);
@@ -215,7 +214,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex,
     q_ct1.submit([&](sycl::handler &cgh) {
       auto queues = particles[i].queues;
        cgh.single_task<class Init>([=]() {
-         //InitParticleQueues(queues, Capacity);
+         InitParticleQueues(queues, Capacity);
       });
     });   
     particles[i].stream = dev_ct1.create_queue();
@@ -271,7 +270,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex,
     int chunk = std::min(left, batch);
 
     for (int i = 0; i < ParticleType::NumParticleTypes; i++) {
-      //q_ct1.memcpy(particles[i].slotManager, slotManagerInit_dev, ManagerSize).wait();
+      q_ct1.memcpy(particles[i].slotManager, slotManagerInit_dev, ManagerSize).wait();
     }
 
     // Initialize primary particles.
@@ -328,7 +327,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex,
                                   sycl::range<3>(1, 1, TransportThreads),
                               sycl::range<3>(1, 1, TransportThreads)),
             [=](sycl::nd_item<3> item_ct1) {
-             /* TransportElectrons<true>(electronsTracks,
+             /*TransportElectrons<true>(electronsTracks,
                                        currentlyActive,
                                        secondaries, 
                                        nextActive,
@@ -337,6 +336,7 @@ void example13(int numParticles, double energy, int batch, const int *MCIndex,
                                        item_ct1);
             */
             });
+             
       });
       
       electrons.event_ct1 = std::chrono::steady_clock::now();

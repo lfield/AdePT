@@ -3,7 +3,7 @@
 
 #include <CL/sycl.hpp>
 #include <dpct/dpct.hpp>
-#include "example13.dp.hpp"
+#include "example13.dp.h"
 
 #include <AdePT/BVHNavigator.h>
 #include <fieldPropagatorConstBz.h>
